@@ -2,11 +2,12 @@
 
 namespace App\Listeners;
 
-use App\Events\EventCancelled;
-use App\Jobs\SendBulkAnnouncementJob;
+use App\Events\BookingConfirmed;
+use App\Jobs\SendBookingEmailJob;
+use App\Jobs\SendBookingSmsJob;
 use Illuminate\Contracts\Queue\ShouldQueue;
 
-class SendEventCancellationNotifications implements ShouldQueue
+class SendBookingConfirmationNotifications implements ShouldQueue
 {
     public string $queue = 'notifications';
 
@@ -16,23 +17,12 @@ class SendEventCancellationNotifications implements ShouldQueue
 
     public function backoff(): array
     {
-        return [30, 60, 120];
+        return [10, 30, 60];
     }
 
-    public function handle(EventCancelled $event): void
+    public function handle(BookingConfirmed $event): void
     {
-        $message = "تم إلغاء فعالية: {$event->event->title}";
-
-        SendBulkAnnouncementJob::dispatch(
-            $event->event->id,
-            $message,
-            'email'
-        );
-
-        SendBulkAnnouncementJob::dispatch(
-            $event->event->id,
-            $message,
-            'sms'
-        );
+        SendBookingEmailJob::dispatch($event->booking->id);
+        SendBookingSmsJob::dispatch($event->booking->id);
     }
 }
