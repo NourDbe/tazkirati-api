@@ -139,31 +139,48 @@ class BookingServiceTest extends TestCase
     }
 
     public function test_paid_booking_cannot_be_cancelled(): void
-    {
-        $user = User::factory()->create();
+{
+    $user = User::factory()->create();
 
-        $ticketType = TicketType::factory()->create([
-            'total_quantity' => 100,
-            'reserved_quantity' => 0,
-            'sold_quantity' => 0,
-        ]);
+    $ticketType = TicketType::factory()->create([
+        'total_quantity' => 100,
+        'reserved_quantity' => 0,
+        'sold_quantity' => 0,
+    ]);
 
-        $booking = $this->bookingService->createReservation($user, [
-            [
-                'ticket_type_id' => $ticketType->id,
-                'quantity' => 2,
-            ],
-        ]);
+    $booking = $this->bookingService->createReservation($user, [
+        [
+            'ticket_type_id' => $ticketType->id,
+            'quantity' => 2,
+        ],
+    ]);
 
-        $paidBooking = $this->bookingService->confirmPayment($booking);
+    $paidBooking = $this->bookingService->confirmPayment($booking);
 
-        $result = $this->bookingService->cancelReservation($paidBooking);
-
-        $this->assertEquals(BookingStatus::Paid, $result->status);
-        $this->assertEquals(2, $ticketType->fresh()->sold_quantity);
-        $this->assertEquals(0, $ticketType->fresh()->reserved_quantity);
-        $this->assertDatabaseCount('tickets', 2);
+    try {
+        $this->bookingService->cancelReservation($paidBooking);
+        $this->fail('Expected ValidationException was not thrown.');
+    } catch (ValidationException $exception) {
+        $this->assertNotEmpty($exception->errors());
     }
+
+    $this->assertEquals(
+        BookingStatus::Paid,
+        $paidBooking->fresh()->status
+    );
+
+    $this->assertEquals(
+        2,
+        $ticketType->fresh()->sold_quantity
+    );
+
+    $this->assertEquals(
+        0,
+        $ticketType->fresh()->reserved_quantity
+    );
+
+    $this->assertDatabaseCount('tickets', 2);
+}
     public function test_expire_job_releases_stock_after_ten_minutes(): void
 {
     $user = User::factory()->create();

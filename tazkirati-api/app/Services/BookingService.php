@@ -5,25 +5,27 @@ namespace App\Services;
 use App\Contracts\BookingServiceInterface;
 use App\Enums\BookingStatus;
 use App\Enums\EventStatus;
+use App\Events\BookingConfirmed;
+use App\Jobs\ExpireBookingJob;
 use App\Models\Booking;
+use App\Models\BookingItem;
+use App\Models\Event;
 use App\Models\Ticket;
-use App\Models\TicketType as TicketTypeModel;
+use App\Models\TicketType;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
-use App\Jobs\ExpireBookingJob;
-use App\Events\BookingConfirmed;
 
 class BookingService implements BookingServiceInterface
 {
-    /**
-     * إنشاء حجز مؤقت لمدة 10 دقائق.
-     */
+    public function __construct(
+        private EventCacheService $eventCache
+    ) {}
+
     public function createReservation(User $user, array $items): Booking
     {
-        $booking = DB::transaction(function () use ($user, $items)  {
-
+        $booking = DB::transaction(function () use ($user, $items) {
             $booking = Booking::create([
                 'user_id' => $user->id,
                 'status' => BookingStatus::Pending,
@@ -34,20 +36,15 @@ class BookingService implements BookingServiceInterface
             $totalAmount = 0;
 
             foreach ($items as $item) {
-                $quantity = (int) $item['quantity'];
-
-                if ($quantity < 1) {
-                    throw ValidationException::withMessages([
-                        'quantity' => 'يجب أن تكون الكمية أكبر من صفر.',
-                    ]);
-                }
-
-                $ticketType = TicketTypeModel::with('event')
+                $ticketType = TicketType::query()
+                    ->with('event')
                     ->findOrFail($item['ticket_type_id']);
+
+                $quantity = (int) $item['quantity'];
 
                 if (
                     $ticketType->event->status !== EventStatus::Published ||
-                    $ticketType->event->starts_at->isPast()
+                    $ticketType->event->starts_at <= now()
                 ) {
                     throw ValidationException::withMessages([
                         'event' => 'الفعالية غير متاحة للحجز.',
@@ -56,12 +53,11 @@ class BookingService implements BookingServiceInterface
 
                 if ($quantity > $ticketType->max_per_booking) {
                     throw ValidationException::withMessages([
-                        'quantity' => 'تجاوزت الحد الأقصى للتذاكر في الحجز الواحد.',
+                        'quantity' => 'تجاوزت الحد الأقصى للتذاكر المسموح بها في الحجز.',
                     ]);
                 }
 
-                // حجز الكمية بشكل ذري لمنع تجاوز المخزون.
-                $reserved = TicketTypeModel::query()
+                $updated = TicketType::query()
                     ->whereKey($ticketType->id)
                     ->whereRaw(
                         '(total_quantity - reserved_quantity - sold_quantity) >= ?',
@@ -69,16 +65,17 @@ class BookingService implements BookingServiceInterface
                     )
                     ->increment('reserved_quantity', $quantity);
 
-                if ($reserved === 0) {
+                if ($updated === 0) {
                     throw ValidationException::withMessages([
-                        'tickets' => 'الكمية المطلوبة من التذاكر غير متاحة.',
+                        'ticket_type_id' => 'عدد التذاكر المتاحة غير كافٍ.',
                     ]);
                 }
 
-                $unitPrice = (float) $ticketType->price;
-                $subtotal = round($unitPrice * $quantity, 2);
+                $unitPrice = $ticketType->price;
+                $subtotal = $unitPrice * $quantity;
 
-                $booking->items()->create([
+                BookingItem::create([
+                    'booking_id' => $booking->id,
                     'ticket_type_id' => $ticketType->id,
                     'quantity' => $quantity,
                     'unit_price' => $unitPrice,
@@ -89,104 +86,128 @@ class BookingService implements BookingServiceInterface
             }
 
             $booking->update([
-                'total_amount' => round($totalAmount, 2),
+                'total_amount' => $totalAmount,
             ]);
 
-            return $booking->load('items');
+            return $booking->load('items.ticketType');
         });
 
+        // إبطال كاش المخزون للفعاليات المتأثرة.
+        $this->forgetBookingEventsCache($booking);
+
+        // جدولة انتهاء الحجز بعد 10 دقائق من إنشائه.
         ExpireBookingJob::dispatch($booking->id)
             ->delay($booking->expires_at);
 
         return $booking;
-            }
+    }
 
-    /**
-     * تأكيد الدفع وتحويل الكمية المحجوزة إلى مباعة.
-     */
     public function confirmPayment(Booking $booking): Booking
-{
-    $paidBooking = DB::transaction(function () use ($booking) {
-
-        $booking = Booking::whereKey($booking->id)
-            ->lockForUpdate()
-            ->firstOrFail();
-
-        if (
-            $booking->status !== BookingStatus::Pending ||
-            !$booking->expires_at ||
-            $booking->expires_at->isPast()
-        ) {
-            throw ValidationException::withMessages([
-                'booking' => 'الحجز غير صالح للدفع أو انتهت صلاحيته.',
-            ]);
-        }
-
-        $items = $booking->items()->with('ticketType')->get();
-
-        foreach ($items as $item) {
-            $ticketType = $item->ticketType;
-
-            if ($ticketType->reserved_quantity < $item->quantity) {
-                throw ValidationException::withMessages([
-                    'tickets' => 'الكمية المحجوزة غير كافية.',
-                ]);
-            }
-
-            $ticketType->decrement('reserved_quantity', $item->quantity);
-            $ticketType->increment('sold_quantity', $item->quantity);
-
-            for ($i = 0; $i < $item->quantity; $i++) {
-                Ticket::create([
-                    'booking_item_id' => $item->id,
-                    'code' => (string) Str::uuid(),
-                ]);
-            }
-        }
-
-        $booking->update([
-            'status' => BookingStatus::Paid,
-            'paid_at' => now(),
-        ]);
-
-        return $booking->load('items.tickets');
-    });
-
-    BookingConfirmed::dispatch($paidBooking);
-
-    return $paidBooking;
-}
-
-    /**
-     * إلغاء الحجز المؤقت وتحرير الكميات.
-     */
-    public function cancelReservation(Booking $booking): Booking
     {
-        return DB::transaction(function () use ($booking) {
-
-            $booking = Booking::whereKey($booking->id)
+        $paidBooking = DB::transaction(function () use ($booking) {
+            $booking = Booking::query()
                 ->lockForUpdate()
-                ->firstOrFail();
+                ->findOrFail($booking->id);
 
-            // لا نحرر مخزون حجز مدفوع أو منتهٍ سابقاً.
             if ($booking->status !== BookingStatus::Pending) {
-                return $booking;
+                throw ValidationException::withMessages([
+                    'booking' => 'هذا الحجز غير قابل لتأكيد الدفع.',
+                ]);
             }
 
-            $items = $booking->items()->with('ticketType')->get();
+            if (
+                $booking->expires_at === null ||
+                $booking->expires_at->isPast()
+            ) {
+                throw ValidationException::withMessages([
+                    'booking' => 'انتهت صلاحية الحجز.',
+                ]);
+            }
 
-            foreach ($items as $item) {
-                $item->ticketType->decrement(
+            $booking->load('items.ticketType');
+
+            foreach ($booking->items as $item) {
+                $ticketType = TicketType::query()
+                    ->findOrFail($item->ticket_type_id);
+
+                $ticketType->decrement(
                     'reserved_quantity',
                     $item->quantity
                 );
+
+                $ticketType->increment(
+                    'sold_quantity',
+                    $item->quantity
+                );
+
+                for ($i = 0; $i < $item->quantity; $i++) {
+                    Ticket::create([
+                        'booking_item_id' => $item->id,
+                        'code' => (string) Str::uuid(),
+                    ]);
+                }
+            }
+
+            $booking->update([
+                'status' => BookingStatus::Paid,
+                'paid_at' => now(),
+            ]);
+
+            return $booking->fresh('items.ticketType');
+        });
+
+        // إبطال الكاش بعد نجاح الدفع.
+        $this->forgetBookingEventsCache($paidBooking);
+
+        // إطلاق الحدث بعد إتمام المعاملة.
+        BookingConfirmed::dispatch($paidBooking);
+
+        return $paidBooking;
+    }
+
+    public function cancelReservation(Booking $booking): Booking
+    {
+        $cancelledBooking = DB::transaction(function () use ($booking) {
+            $booking = Booking::query()
+                ->lockForUpdate()
+                ->findOrFail($booking->id);
+
+            if ($booking->status !== BookingStatus::Pending) {
+                throw ValidationException::withMessages([
+                    'booking' => 'لا يمكن إلغاء هذا الحجز.',
+                ]);
+            }
+
+            $booking->load('items.ticketType');
+
+            foreach ($booking->items as $item) {
+                TicketType::query()
+                    ->whereKey($item->ticket_type_id)
+                    ->decrement('reserved_quantity', $item->quantity);
             }
 
             $booking->update([
                 'status' => BookingStatus::Expired,
             ]);
 
-            return $booking;
+            return $booking->fresh('items.ticketType');
         });
+
+        // إبطال الكاش بعد تحرير التذاكر.
+        $this->forgetBookingEventsCache($cancelledBooking);
+
+        return $cancelledBooking;
+    }
+
+    /**
+     * إبطال كاش جميع الفعاليات المرتبطة بعناصر الحجز.
+     */
+    private function forgetBookingEventsCache(Booking $booking): void
+    {
+        foreach ($booking->items as $item) {
+            $this->eventCache->forgetEvent(
+                $item->ticketType->event_id
+            );
+        }
     }
 }
