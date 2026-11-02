@@ -2,34 +2,37 @@
 
 namespace App\Listeners;
 
-use App\Events\BookingConfirmed;
+use App\Events\EventCancelled;
+use App\Jobs\SendBulkAnnouncementJob;
 use Illuminate\Contracts\Queue\ShouldQueue;
-use Illuminate\Support\Facades\Log;
 
-class SendBookingConfirmationNotifications implements ShouldQueue
+class SendEventCancellationNotifications implements ShouldQueue
 {
-    public bool $afterCommit = true;
     public string $queue = 'notifications';
+
+    public bool $afterCommit = true;
 
     public int $tries = 3;
 
     public function backoff(): array
     {
-        return [10, 30, 60];
+        return [30, 60, 120];
     }
 
-    public function handle(BookingConfirmed $event): void
+    public function handle(EventCancelled $event): void
     {
-        $booking = $event->booking->loadMissing([
-            'user',
-            'items.ticketType.event.organizer.user',
-        ]);
+        $message = "تم إلغاء فعالية: {$event->event->title}";
 
-        Log::info('Booking confirmation notification queued', [
-            'booking_id' => $booking->id,
-            'customer_email' => $booking->user->email,
-        ]);
+        SendBulkAnnouncementJob::dispatch(
+            $event->event->id,
+            $message,
+            'email'
+        );
 
-        // سنربط Email وSMS Jobs في مرحلة الإشعارات.
+        SendBulkAnnouncementJob::dispatch(
+            $event->event->id,
+            $message,
+            'sms'
+        );
     }
 }
