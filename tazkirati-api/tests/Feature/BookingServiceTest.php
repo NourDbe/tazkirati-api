@@ -9,7 +9,8 @@ use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Validation\ValidationException;
 use Tests\TestCase;
-
+use App\Jobs\ExpireBookingJob;
+use Illuminate\Support\Facades\Queue;
 class BookingServiceTest extends TestCase
 {
     use RefreshDatabase;
@@ -21,6 +22,7 @@ class BookingServiceTest extends TestCase
         parent::setUp();
 
         $this->bookingService = app(BookingServiceInterface::class);
+        Queue::fake();
     }
 
     public function test_user_can_create_temporary_reservation(): void
@@ -162,4 +164,84 @@ class BookingServiceTest extends TestCase
         $this->assertEquals(0, $ticketType->fresh()->reserved_quantity);
         $this->assertDatabaseCount('tickets', 2);
     }
+    public function test_expire_job_releases_stock_after_ten_minutes(): void
+{
+    $user = User::factory()->create();
+
+    $ticketType = TicketType::factory()->create([
+        'total_quantity' => 100,
+        'reserved_quantity' => 0,
+        'sold_quantity' => 0,
+    ]);
+
+    $booking = $this->bookingService->createReservation($user, [
+        [
+            'ticket_type_id' => $ticketType->id,
+            'quantity' => 3,
+        ],
+    ]);
+
+    Queue::assertPushed(
+        ExpireBookingJob::class,
+        function ($job) use ($booking) {
+            return $job->bookingId === $booking->id;
+        }
+    );
+
+    $this->travel(11)->minutes();
+
+    (new ExpireBookingJob($booking->id))->handle(
+        $this->bookingService
+    );
+
+    $this->assertEquals(
+        BookingStatus::Expired,
+        $booking->fresh()->status
+    );
+
+    $this->assertEquals(
+        0,
+        $ticketType->fresh()->reserved_quantity
+    );
+}
+public function test_expire_job_does_not_release_paid_booking_stock(): void
+{
+    $user = User::factory()->create();
+
+    $ticketType = TicketType::factory()->create([
+        'total_quantity' => 100,
+        'reserved_quantity' => 0,
+        'sold_quantity' => 0,
+    ]);
+
+    $booking = $this->bookingService->createReservation($user, [
+        [
+            'ticket_type_id' => $ticketType->id,
+            'quantity' => 2,
+        ],
+    ]);
+
+    $booking = $this->bookingService->confirmPayment($booking);
+
+    $this->travel(11)->minutes();
+
+    (new ExpireBookingJob($booking->id))->handle(
+        $this->bookingService
+    );
+
+    $this->assertEquals(
+        BookingStatus::Paid,
+        $booking->fresh()->status
+    );
+
+    $this->assertEquals(
+        2,
+        $ticketType->fresh()->sold_quantity
+    );
+
+    $this->assertEquals(
+        0,
+        $ticketType->fresh()->reserved_quantity
+    );
+}
 }

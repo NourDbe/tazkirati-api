@@ -12,6 +12,7 @@ use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
+use App\Jobs\ExpireBookingJob;
 
 class BookingService implements BookingServiceInterface
 {
@@ -20,7 +21,7 @@ class BookingService implements BookingServiceInterface
      */
     public function createReservation(User $user, array $items): Booking
     {
-        return DB::transaction(function () use ($user, $items) {
+        $booking = DB::transaction(function () use ($user, $items)  {
 
             $booking = Booking::create([
                 'user_id' => $user->id,
@@ -92,7 +93,12 @@ class BookingService implements BookingServiceInterface
 
             return $booking->load('items');
         });
-    }
+
+        ExpireBookingJob::dispatch($booking->id)
+            ->delay($booking->expires_at);
+
+        return $booking;
+            }
 
     /**
      * تأكيد الدفع وتحويل الكمية المحجوزة إلى مباعة.
