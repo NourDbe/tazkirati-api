@@ -13,6 +13,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use App\Jobs\ExpireBookingJob;
+use App\Events\BookingConfirmed;
 
 class BookingService implements BookingServiceInterface
 {
@@ -104,61 +105,57 @@ class BookingService implements BookingServiceInterface
      * تأكيد الدفع وتحويل الكمية المحجوزة إلى مباعة.
      */
     public function confirmPayment(Booking $booking): Booking
-    {
-        return DB::transaction(function () use ($booking) {
+{
+    $paidBooking = DB::transaction(function () use ($booking) {
 
-            $booking = Booking::whereKey($booking->id)
-                ->lockForUpdate()
-                ->firstOrFail();
+        $booking = Booking::whereKey($booking->id)
+            ->lockForUpdate()
+            ->firstOrFail();
 
-            if (
-                $booking->status !== BookingStatus::Pending ||
-                !$booking->expires_at ||
-                $booking->expires_at->isPast()
-            ) {
+        if (
+            $booking->status !== BookingStatus::Pending ||
+            !$booking->expires_at ||
+            $booking->expires_at->isPast()
+        ) {
+            throw ValidationException::withMessages([
+                'booking' => 'الحجز غير صالح للدفع أو انتهت صلاحيته.',
+            ]);
+        }
+
+        $items = $booking->items()->with('ticketType')->get();
+
+        foreach ($items as $item) {
+            $ticketType = $item->ticketType;
+
+            if ($ticketType->reserved_quantity < $item->quantity) {
                 throw ValidationException::withMessages([
-                    'booking' => 'الحجز غير صالح للدفع أو انتهت صلاحيته.',
+                    'tickets' => 'الكمية المحجوزة غير كافية.',
                 ]);
             }
 
-            $items = $booking->items()->with('ticketType')->get();
+            $ticketType->decrement('reserved_quantity', $item->quantity);
+            $ticketType->increment('sold_quantity', $item->quantity);
 
-            foreach ($items as $item) {
-                $ticketType = $item->ticketType;
-
-                if ($ticketType->reserved_quantity < $item->quantity) {
-                    throw ValidationException::withMessages([
-                        'tickets' => 'الكمية المحجوزة غير كافية.',
-                    ]);
-                }
-
-                $ticketType->decrement(
-                    'reserved_quantity',
-                    $item->quantity
-                );
-
-                $ticketType->increment(
-                    'sold_quantity',
-                    $item->quantity
-                );
-
-                // إنشاء تذكرة مستقلة لكل وحدة مباعة.
-                for ($i = 0; $i < $item->quantity; $i++) {
-                    Ticket::create([
-                        'booking_item_id' => $item->id,
-                        'code' => (string) Str::uuid(),
-                    ]);
-                }
+            for ($i = 0; $i < $item->quantity; $i++) {
+                Ticket::create([
+                    'booking_item_id' => $item->id,
+                    'code' => (string) Str::uuid(),
+                ]);
             }
+        }
 
-            $booking->update([
-                'status' => BookingStatus::Paid,
-                'paid_at' => now(),
-            ]);
+        $booking->update([
+            'status' => BookingStatus::Paid,
+            'paid_at' => now(),
+        ]);
 
-            return $booking->load('items.tickets');
-        });
-    }
+        return $booking->load('items.tickets');
+    });
+
+    BookingConfirmed::dispatch($paidBooking);
+
+    return $paidBooking;
+}
 
     /**
      * إلغاء الحجز المؤقت وتحرير الكميات.
