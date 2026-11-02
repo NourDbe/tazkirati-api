@@ -20,9 +20,6 @@ class DatabaseSeeder extends Seeder
         TazkiratiSeeder::class,
     ]);
 
-        User::factory()->create([
-            'name' => 'Test User',
-            'email' => 'test@example.com',
-        ]);
+
     }
 }
