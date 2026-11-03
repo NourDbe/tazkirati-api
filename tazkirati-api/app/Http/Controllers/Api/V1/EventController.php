@@ -4,9 +4,11 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Enums\EventStatus;
 use App\Http\Controllers\Controller;
+use App\Http\Resources\EventResource;
 use App\Models\Event;
 use App\Services\EventCacheService;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 
 class EventController extends Controller
 {
@@ -14,17 +16,16 @@ class EventController extends Controller
         private EventCacheService $eventCache
     ) {}
 
-    public function index(): JsonResponse
+    public function index(): AnonymousResourceCollection
     {
-        $events = $this->eventCache->getUpcomingEvents();
-
-        return response()->json([
+        return EventResource::collection(
+            $this->eventCache->getUpcomingEvents()
+        )->additional([
             'message' => 'تم جلب الفعاليات بنجاح.',
-            'data' => $events,
         ]);
     }
 
-    public function show(Event $event): JsonResponse
+    public function show(Event $event): EventResource
     {
         abort_unless(
             $event->status === EventStatus::Published,
@@ -33,15 +34,14 @@ class EventController extends Controller
         );
 
         $event->load([
-            'venue',
-            'organizer',
+            'venue.media',
+            'organizer.media',
             'ticketTypes',
             'media',
         ]);
 
-        return response()->json([
+        return (new EventResource($event))->additional([
             'message' => 'تم جلب تفاصيل الفعالية بنجاح.',
-            'data' => $event,
         ]);
     }
 
@@ -54,9 +54,12 @@ class EventController extends Controller
         );
 
         return response()->json([
-            'event_id' => $event->id,
-            'remaining_tickets' => $this->eventCache
-                ->getRemainingTickets($event->id),
+            'message' => 'تم جلب عدد التذاكر المتبقية بنجاح.',
+            'data' => [
+                'event_id' => $event->id,
+                'remaining_tickets' => $this->eventCache
+                    ->getRemainingTickets($event->id),
+            ],
         ]);
     }
 }

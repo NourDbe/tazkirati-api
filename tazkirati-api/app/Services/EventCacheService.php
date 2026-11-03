@@ -43,11 +43,11 @@ class EventCacheService
             $cacheKey,
             now()->addMinutes(10),
             fn () => Event::query()
-                    ->upcoming()
+                ->upcoming()
 
                 ->with([
-                    'venue',
-                    'organizer',
+                    'venue.media',
+                    'organizer.media',
                     'ticketTypes',
                     'media',
                 ])

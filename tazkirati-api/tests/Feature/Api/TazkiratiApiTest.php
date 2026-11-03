@@ -183,66 +183,136 @@ class TazkiratiApiTest extends TestCase
         ]);
     }
 
-public function test_validation_errors_use_unified_json_response(): void
-{
-    $user = User::factory()->create();
+    public function test_validation_errors_use_unified_json_response(): void
+    {
+        $user = User::factory()->create();
 
-    Sanctum::actingAs($user);
+        Sanctum::actingAs($user);
 
-    $response = $this->postJson('/api/v1/bookings', [
-        'items' => [],
-    ]);
-
-    $response->assertUnprocessable()
-        ->assertJsonPath('success', false)
-        ->assertJsonPath('message', 'بيانات الطلب غير صالحة.')
-        ->assertJsonStructure([
-            'success',
-            'message',
-            'errors',
+        $response = $this->postJson('/api/v1/bookings', [
+            'items' => [],
         ]);
-}
 
-public function test_unauthenticated_api_response_uses_unified_format(): void
-{
-    $response = $this->postJson('/api/v1/bookings', [
-        'items' => [],
-    ]);
+        $response->assertUnprocessable()
+            ->assertJsonPath('success', false)
+            ->assertJsonPath('message', 'بيانات الطلب غير صالحة.')
+            ->assertJsonStructure([
+                'success',
+                'message',
+                'errors',
+            ]);
+    }
 
-    $response->assertUnauthorized()
-        ->assertJsonPath('success', false)
-        ->assertJsonPath('message', 'يجب تسجيل الدخول أولاً.')
-        ->assertJsonStructure([
-            'success',
-            'message',
-            'errors',
+    public function test_unauthenticated_api_response_uses_unified_format(): void
+    {
+        $response = $this->postJson('/api/v1/bookings', [
+            'items' => [],
         ]);
-}
 
-public function test_missing_api_route_returns_unified_404_response(): void
-{
-    $response = $this->getJson('/api/v1/route-that-does-not-exist');
+        $response->assertUnauthorized()
+            ->assertJsonPath('success', false)
+            ->assertJsonPath('message', 'يجب تسجيل الدخول أولاً.')
+            ->assertJsonStructure([
+                'success',
+                'message',
+                'errors',
+            ]);
+    }
 
-    $response->assertNotFound()
-        ->assertJsonPath('success', false)
-        ->assertJsonStructure([
-            'success',
-            'message',
-            'errors',
-        ]);
-}
+    public function test_missing_api_route_returns_unified_404_response(): void
+    {
+        $response = $this->getJson('/api/v1/route-that-does-not-exist');
 
-public function test_wrong_api_http_method_returns_unified_405_response(): void
-{
-    $response = $this->putJson('/api/v1/events');
+        $response->assertNotFound()
+            ->assertJsonPath('success', false)
+            ->assertJsonStructure([
+                'success',
+                'message',
+                'errors',
+            ]);
+    }
 
-    $response->assertStatus(405)
-        ->assertJsonPath('success', false)
-        ->assertJsonStructure([
-            'success',
-            'message',
-            'errors',
-        ]);
-}
+    public function test_wrong_api_http_method_returns_unified_405_response(): void
+    {
+        $response = $this->putJson('/api/v1/events');
 
+        $response->assertStatus(405)
+            ->assertJsonPath('success', false)
+            ->assertJsonStructure([
+                'success',
+                'message',
+                'errors',
+            ]);
+    }
+
+    public function test_events_response_contains_resources_and_pagination(): void
+    {
+        $event = $this->createPublishedEvent();
+
+        $response = $this->getJson('/api/v1/events');
+
+        $response->assertOk()
+            ->assertJsonPath('data.0.id', $event->id)
+            ->assertJsonStructure([
+                'message',
+                'data' => [
+                    '*' => [
+                        'id',
+                        'title',
+                        'description',
+                        'event_type',
+                        'status',
+                        'starts_at',
+                        'ends_at',
+                        'venue' => [
+                            'id',
+                            'name',
+                            'city',
+                            'media',
+                        ],
+                        'organizer' => [
+                            'id',
+                            'name',
+                            'media',
+                        ],
+                        'ticket_types',
+                        'media',
+                    ],
+                ],
+                'links',
+                'meta',
+            ]);
+    }
+
+    public function test_guest_can_view_event_details_with_loaded_relations(): void
+    {
+        $event = $this->createPublishedEvent();
+
+        $response = $this->getJson(
+            "/api/v1/events/{$event->id}"
+        );
+
+        $response->assertOk()
+            ->assertJsonPath('data.id', $event->id)
+            ->assertJsonStructure([
+                'message',
+                'data' => [
+                    'id',
+                    'title',
+                    'status',
+                    'venue' => [
+                        'id',
+                        'name',
+                        'media',
+                    ],
+                    'organizer' => [
+                        'id',
+                        'name',
+                        'media',
+                    ],
+                    'ticket_types',
+                    'media',
+                ],
+            ]);
+    }
 }
