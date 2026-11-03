@@ -1,3 +1,4 @@
+
 <?php
 
 return [
@@ -34,9 +35,10 @@ return [
             'channel' => env('SLACK_BOT_USER_DEFAULT_CHANNEL'),
         ],
     ],
+
     'tazkirati_notifications' => [
-    'email_fail' => env('Tazkirati_EMAIL_FAIL', false),
-    'sms_fail' => env('Tazkirati_SMS_FAIL', false),
-],
+        'email_fail' => env('Tazkirati_EMAIL_FAIL', false),
+        'sms_fail' => env('Tazkirati_SMS_FAIL', false),
+    ],
 
 ];
