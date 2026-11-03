@@ -8,6 +8,8 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\MorphMany;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use App\Models\Scopes\PublishedEventScope;
+use Illuminate\Database\Eloquent\Builder;
 
 class Event extends Model
 {
@@ -51,4 +53,25 @@ class Event extends Model
     {
         return $this->morphMany(Media::class, 'mediable');
     }
+    protected static function booted(): void
+{
+    static::addGlobalScope(new PublishedEventScope);
+}
+
+public function scopeInCity(Builder $query, string $city): Builder
+{
+    return $query->whereHas('venue', function (Builder $venueQuery) use ($city) {
+        $venueQuery->where('city', $city);
+    });
+}
+
+public function scopeUpcoming(Builder $query): Builder
+{
+    return $query->where('starts_at', '>', now());
+}
+
+public function scopeOfType(Builder $query, string $type): Builder
+{
+    return $query->where('event_type', $type);
+}
 }

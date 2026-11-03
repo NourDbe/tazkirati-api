@@ -43,8 +43,8 @@ class EventCacheService
             $cacheKey,
             now()->addMinutes(10),
             fn () => Event::query()
-                ->where('status', 'published')
-                ->where('starts_at', '>', now())
+                    ->upcoming()
+
                 ->with([
                     'venue',
                     'organizer',

@@ -8,14 +8,19 @@ use Illuminate\Foundation\Http\FormRequest;
 class CancelEventRequest extends FormRequest
 {
     public function authorize(): bool
-    {
-        $event = $this->route('event');
-        $organizer = $this->user()?->organizer;
+{
+    $eventId = $this->route('event');
+    $organizer = $this->user()?->organizer;
 
-        return $event instanceof Event
-            && $organizer !== null
-            && $event->organizer_id === $organizer->id;
+    if (! $organizer || ! is_numeric($eventId)) {
+        return false;
     }
+
+    return Event::withoutGlobalScope(PublishedEventScope::class)
+        ->whereKey($eventId)
+        ->where('organizer_id', $organizer->id)
+        ->exists();
+}
 
     public function rules(): array
     {
