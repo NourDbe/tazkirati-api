@@ -182,4 +182,67 @@ class TazkiratiApiTest extends TestCase
             'status' => EventStatus::Published->value,
         ]);
     }
+
+public function test_validation_errors_use_unified_json_response(): void
+{
+    $user = User::factory()->create();
+
+    Sanctum::actingAs($user);
+
+    $response = $this->postJson('/api/v1/bookings', [
+        'items' => [],
+    ]);
+
+    $response->assertUnprocessable()
+        ->assertJsonPath('success', false)
+        ->assertJsonPath('message', 'بيانات الطلب غير صالحة.')
+        ->assertJsonStructure([
+            'success',
+            'message',
+            'errors',
+        ]);
+}
+
+public function test_unauthenticated_api_response_uses_unified_format(): void
+{
+    $response = $this->postJson('/api/v1/bookings', [
+        'items' => [],
+    ]);
+
+    $response->assertUnauthorized()
+        ->assertJsonPath('success', false)
+        ->assertJsonPath('message', 'يجب تسجيل الدخول أولاً.')
+        ->assertJsonStructure([
+            'success',
+            'message',
+            'errors',
+        ]);
+}
+
+public function test_missing_api_route_returns_unified_404_response(): void
+{
+    $response = $this->getJson('/api/v1/route-that-does-not-exist');
+
+    $response->assertNotFound()
+        ->assertJsonPath('success', false)
+        ->assertJsonStructure([
+            'success',
+            'message',
+            'errors',
+        ]);
+}
+
+public function test_wrong_api_http_method_returns_unified_405_response(): void
+{
+    $response = $this->putJson('/api/v1/events');
+
+    $response->assertStatus(405)
+        ->assertJsonPath('success', false)
+        ->assertJsonStructure([
+            'success',
+            'message',
+            'errors',
+        ]);
+}
+
 }
