@@ -7,6 +7,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\CancelBookingRequest;
 use App\Http\Requests\ConfirmBookingRequest;
 use App\Http\Requests\StoreBookingRequest;
+use App\Http\Resources\BookingResource;
 use App\Models\Booking;
 use Illuminate\Http\JsonResponse;
 
@@ -23,10 +24,14 @@ class BookingController extends Controller
             $request->validated()['items']
         );
 
-        return response()->json([
-            'message' => 'تم إنشاء الحجز المؤقت بنجاح. لديك 10 دقائق لإتمام الدفع.',
-            'data' => $booking->load('items.ticketType'),
-        ], 201);
+        $booking->load('items.ticketType');
+
+        return (new BookingResource($booking))
+            ->additional([
+                'message' => 'تم إنشاء الحجز المؤقت بنجاح. لديك 10 دقائق لإتمام الدفع.',
+            ])
+            ->response()
+            ->setStatusCode(201);
     }
 
     public function confirm(
@@ -35,10 +40,16 @@ class BookingController extends Controller
     ): JsonResponse {
         $paidBooking = $this->bookingService->confirmPayment($booking);
 
-        return response()->json([
-            'message' => 'تم تأكيد الدفع والحجز بنجاح.',
-            'data' => $paidBooking->load('items.ticketType', 'items.tickets'),
+        $paidBooking->load([
+            'items.ticketType',
+            'items.tickets',
         ]);
+
+        return (new BookingResource($paidBooking))
+            ->additional([
+                'message' => 'تم تأكيد الدفع والحجز بنجاح.',
+            ])
+            ->response();
     }
 
     public function cancel(
@@ -48,9 +59,12 @@ class BookingController extends Controller
         $cancelledBooking = $this->bookingService
             ->cancelReservation($booking);
 
-        return response()->json([
-            'message' => 'تم إلغاء الحجز المؤقت وتحرير التذاكر.',
-            'data' => $cancelledBooking,
-        ]);
+        $cancelledBooking->load('items.ticketType');
+
+        return (new BookingResource($cancelledBooking))
+            ->additional([
+                'message' => 'تم إلغاء الحجز المؤقت وتحرير التذاكر.',
+            ])
+            ->response();
     }
 }

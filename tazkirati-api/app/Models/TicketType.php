@@ -6,9 +6,11 @@ use App\Enums\TicketType as TicketCategory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 
 class TicketType extends Model
 {
+    use HasFactory;
     protected $fillable = [
         'event_id',
         'name',

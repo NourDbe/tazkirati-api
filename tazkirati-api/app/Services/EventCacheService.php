@@ -4,11 +4,13 @@ namespace App\Services;
 
 use App\Models\Event;
 use App\Models\TicketType;
+use Illuminate\Contracts\Pagination\LengthAwarePaginator;
+use Illuminate\Pagination\Paginator;
 use Illuminate\Support\Facades\Cache;
 
 class EventCacheService
 {
-    private const UPCOMING_EVENTS_KEY = 'events:upcoming';
+    private const UPCOMING_EVENTS_VERSION_KEY = 'events:upcoming:version';
 
     public function getRemainingTickets(int $eventId): int
     {
@@ -26,29 +28,45 @@ class EventCacheService
         );
     }
 
-    public function getUpcomingEvents()
+    public function getUpcomingEvents(int $perPage = 10): LengthAwarePaginator
     {
+        $page = Paginator::resolveCurrentPage();
+
+        $version = Cache::get(
+            self::UPCOMING_EVENTS_VERSION_KEY,
+            1
+        );
+
+        $cacheKey = "events:upcoming:v{$version}:per_page:{$perPage}:page:{$page}";
+
         return Cache::remember(
-            self::UPCOMING_EVENTS_KEY,
+            $cacheKey,
             now()->addMinutes(10),
             fn () => Event::query()
                 ->where('status', 'published')
                 ->where('starts_at', '>', now())
-                ->with(['venue', 'organizer'])
+                ->with([
+                    'venue',
+                    'organizer',
+                    'ticketTypes',
+                    'media',
+                ])
                 ->orderBy('starts_at')
-                ->limit(20)
-                ->get()
+                ->paginate($perPage)
         );
     }
 
     public function forgetEvent(int $eventId): void
     {
         Cache::forget("event:{$eventId}:remaining_tickets");
-        Cache::forget(self::UPCOMING_EVENTS_KEY);
+
+        $this->forgetUpcomingEvents();
     }
 
     public function forgetUpcomingEvents(): void
     {
-        Cache::forget(self::UPCOMING_EVENTS_KEY);
+        Cache::add(self::UPCOMING_EVENTS_VERSION_KEY, 1);
+
+        Cache::increment(self::UPCOMING_EVENTS_VERSION_KEY);
     }
 }
