@@ -1,61 +1,30 @@
 # Tazkirati API
 
-A RESTful API for an event ticketing and booking platform built with Laravel. The system supports event discovery, ticket reservations, simulated payments, booking cancellation, ticket generation, and asynchronous notifications.
-
-## Tech Stack
-
-- PHP 8.3
-- Laravel 13
-- SQLite (development database)
-- Laravel Sanctum (API authentication)
-- Laravel Queues and Jobs
-- Laravel Cache
-- Polymorphic Eloquent Relationships
-- PHPUnit / Laravel Testing
-
-> **Infrastructure note:** Redis and Laravel Horizon integration are planned but have not yet been installed and verified in the current development environment.
-
-## Features
-
-- Browse published events and view event details.
-- Filter and paginate event listings.
-- Check remaining ticket quantities.
-- Create temporary ticket reservations.
-- Automatically expire unpaid reservations after 10 minutes.
-- Simulate payment confirmation.
-- Generate tickets with unique UUID codes.
-- Cancel pending reservations.
-- Allow organizers to cancel their own events.
-- Send booking confirmation and event cancellation notifications asynchronously.
-- Send bulk announcements in chunks.
-- Record notification delivery attempts and statuses.
-- Cache upcoming events and remaining ticket quantities.
-- Manage media through polymorphic relationships.
-- Return consistent JSON API responses and Arabic validation messages.
+A Laravel RESTful API for event management, ticket reservations, booking payments, and notifications.
 
 ## Requirements
 
 - PHP 8.3 or later
 - Composer
-- SQLite
 - Git
+- SQLite
+- Redis
+- Laravel Sanctum
+- Predis
+- Laravel Horizon
+- PHPUnit
 
-## Installation
+## Project Setup
 
-### 1. Clone the Repository
+Run the following commands from the project root.
 
-```bash
-git clone https://github.com/NourDbe/tazkirati-api.git
-cd tazkirati-api
-```
-
-### 2. Install Dependencies
+### 1. Install Dependencies
 
 ```bash
 composer install
 ```
 
-### 3. Configure Environment
+### 2. Configure Environment
 
 Copy the example environment file:
 
@@ -77,20 +46,22 @@ Generate the application key:
 php artisan key:generate
 ```
 
-### 4. Configure SQLite
+### 3. Configure SQLite
 
 Set the database connection in `.env`:
 
-```env
+```dotenv
 DB_CONNECTION=sqlite
 ```
 
-Create the SQLite database file if it does not exist.
+Create the SQLite database file if it does not already exist.
 
 **Windows PowerShell:**
 
 ```powershell
-New-Item database/database.sqlite -ItemType File
+if (!(Test-Path database/database.sqlite)) {
+    New-Item database/database.sqlite -ItemType File
+}
 ```
 
 **Linux / macOS:**
@@ -99,49 +70,140 @@ New-Item database/database.sqlite -ItemType File
 touch database/database.sqlite
 ```
 
-### 5. Run Migrations and Seeders
+### 4. Configure Redis
+
+Add or update the following settings in `.env`:
+
+```dotenv
+REDIS_CLIENT=predis
+REDIS_HOST=127.0.0.1
+REDIS_PASSWORD=null
+REDIS_PORT=6379
+QUEUE_CONNECTION=redis
+```
+
+Make sure the Redis server is running before starting queue workers.
+
+For local Windows development, Memurai can be used as a Redis-compatible server.
+
+### 5. Configure Horizon Access
+
+Add the authorized dashboard user's email to `.env`:
+
+```dotenv
+HORIZON_ADMIN_EMAIL=organizer1@tazkirati.test
+```
+
+Only the configured user is authorized to access the Horizon dashboard.
+
+### 6. Run Migrations and Seeders
 
 ```bash
 php artisan migrate --seed
+php artisan optimize:clear
 ```
 
-### 6. Start the Development Server
+**Important:** Do not use `migrate:fresh` on a database containing data you need to keep.
+
+### 7. Start the Development Server
 
 ```bash
 php artisan serve
 ```
 
-The API will be available at:
+The application will be available at:
 
 ```text
 http://127.0.0.1:8000
 ```
 
+## Seed Data
+
+The `TazkiratiSeeder` creates:
+
+- 3 organizer users:
+  - organizer1@tazkirati.test
+  - organizer2@tazkirati.test
+  - organizer3@tazkirati.test
+- Development password: `password`
+- 5 venues.
+- 10 published events.
+- Regular and VIP ticket types for each event.
+- 2,000 paid bookings for the first event.
+- 2,000 booking items.
+- 2,000 generated ticket records.
+- Updates the first event's Regular ticket type `sold_quantity` to 2,000.
+
+The seeder does not create permanent Sanctum tokens.
+
+## Authentication Tokens
+
+The API uses Laravel Sanctum personal access tokens.
+
+Open Tinker:
+
+```bash
+php artisan tinker
+```
+
+### Create a Customer Token
+
+```php
+$customer = App\Models\User::create([
+    'name' => 'Postman Customer',
+    'email' => 'postman.customer@tazkirati.test',
+    'password' => Illuminate\Support\Facades\Hash::make('password'),
+]);
+
+$customerToken = $customer->createToken('postman-customer')->plainTextToken;
+
+$customerToken;
+```
+
+### Create an Organizer Token
+
+```php
+$event = App\Models\Event::withoutGlobalScope(
+    App\Models\Scopes\PublishedEventScope::class
+)->first();
+
+$organizer = App\Models\Organizer::findOrFail($event->organizer_id);
+
+$organizerUser = App\Models\User::findOrFail($organizer->user_id);
+
+$organizerToken = $organizerUser->createToken('postman-organizer')->plainTextToken;
+
+$organizerToken;
+$event->id;
+```
+
+Copy the generated values into Postman:
+
+- `customer_token`
+- `organizer_token`
+- `organizer_event_id`
+
+Keep tokens private. Do not commit them to Git or share them publicly.
+
 ## API Endpoints
 
 All API endpoints are prefixed with `/api/v1`.
 
-### Public Event Endpoints
+Base URL:
 
-| Method | Endpoint | Description | Authentication |
+```text
+http://127.0.0.1:8000
+```
+
+| Method | Endpoint | Authentication | Description |
 |---|---|---|---|
-| GET | `/api/v1/events` | List published events | No |
-| GET | `/api/v1/events/{event}` | View event details | No |
-| GET | `/api/v1/events/{event}/remaining-tickets` | Check remaining tickets | No |
-
-### Booking Endpoints
-
-| Method | Endpoint | Description | Authentication |
-|---|---|---|---|
-| POST | `/api/v1/bookings` | Create a ticket reservation | Sanctum |
-| POST | `/api/v1/bookings/{booking}/confirm` | Confirm simulated payment | Sanctum |
-| POST | `/api/v1/bookings/{booking}/cancel` | Cancel a pending reservation | Sanctum |
-
-### Organizer Endpoints
-
-| Method | Endpoint | Description | Authentication |
-|---|---|---|---|
-| POST | `/api/v1/organizer/events/{event}/cancel` | Cancel an organizer's event | Sanctum |
+| GET | `/api/v1/events` | Public | List published events |
+| GET | `/api/v1/events/{event}` | Public | Show event details |
+| GET | `/api/v1/events/{event}/remaining-tickets` | Public | Get remaining ticket inventory |
+| POST | `/api/v1/bookings` | Sanctum | Create temporary booking |
+| POST | `/api/v1/bookings/{booking}/confirm` | Sanctum | Confirm payment |
+| POST | `/api/v1/bookings/{booking}/cancel` | Sanctum | Cancel temporary booking |
+| POST | `/api/v1/organizer/events/{event}/cancel` | Organizer Sanctum | Cancel organizer-owned event |
 
 Authenticated endpoints require a valid Sanctum bearer token:
 
@@ -149,8 +211,6 @@ Authenticated endpoints require a valid Sanctum bearer token:
 Authorization: Bearer YOUR_TOKEN
 Accept: application/json
 ```
-
-The project uses a seeded token for development and testing. It does not currently provide a full registration/login workflow.
 
 ## Booking Lifecycle
 
@@ -167,16 +227,74 @@ The project uses a seeded token for development and testing. It does not current
 
 Paid bookings cannot be cancelled through the pending-reservation cancellation flow.
 
+## Create a Booking
+
+Request:
+
+```http
+POST /api/v1/bookings
+Authorization: Bearer <customer_token>
+Content-Type: application/json
+Accept: application/json
+```
+
+Request body:
+
+```json
+{
+    "items": [
+        {
+            "ticket_type_id": 1,
+            "quantity": 2
+        }
+    ]
+}
+```
+
+A successful reservation returns HTTP `201`.
+
+The temporary reservation has a 10-minute payment window.
+
+## Confirm Payment
+
+```http
+POST /api/v1/bookings/{booking}/confirm
+Authorization: Bearer <customer_token>
+Accept: application/json
+```
+
+Payment confirmation is simulated and is not connected to a real payment gateway.
+
+## Cancel Booking
+
+```http
+POST /api/v1/bookings/{booking}/cancel
+Authorization: Bearer <customer_token>
+Accept: application/json
+```
+
+This endpoint is intended for pending temporary reservations.
+
+## Cancel Event
+
+```http
+POST /api/v1/organizer/events/{event}/cancel
+Authorization: Bearer <organizer_token>
+Accept: application/json
+```
+
+Only the organizer who owns the event can cancel it.
+
 ## Background Jobs
 
-The application separates time-consuming operations from HTTP requests using Laravel Jobs.
+The application uses Laravel Jobs to handle time-consuming operations outside HTTP requests.
 
-| Job | Queue | Tries | Backoff | Responsibility |
-|---|---|---:|---|---|
-| `ExpireBookingJob` | Default queue | Not separately verified | Delayed until reservation expiry | Expires unpaid reservations after 10 minutes |
-| `SendBookingEmailJob` | `notifications` | 3 | 10, 30, 60 seconds | Sends booking confirmation email |
-| `SendBookingSmsJob` | `notifications` | 3 | 10, 30, 60 seconds | Sends booking confirmation SMS |
-| `SendBulkAnnouncementJob` | `announcements` | 3 | 30, 60, 120 seconds | Sends event announcements in chunks |
+| Job | Queue | Responsibility |
+|---|---|---|
+| `ExpireBookingJob` | Default | Expires unpaid reservations after 10 minutes |
+| `SendBookingEmailJob` | Notifications | Sends booking confirmation emails |
+| `SendBookingSmsJob` | Notifications | Sends booking confirmation SMS |
+| `SendBulkAnnouncementJob` | Announcements | Sends event announcements in chunks |
 
 The notification jobs use delivery logs and idempotency keys to reduce duplicate notifications during retries.
 
@@ -184,14 +302,72 @@ Bulk announcements process paid bookings in batches of 500 rather than loading a
 
 ## Events and Listeners
 
-The application uses events and listeners to keep business operations separate from notification delivery.
+The application uses events and listeners to separate business operations from notification delivery.
 
 | Event | Listener | Responsibility |
 |---|---|---|
-| `BookingConfirmed` | `SendBookingConfirmationNotifications` | Dispatch booking confirmation notification jobs |
-| `EventCancelled` | `SendEventCancellationNotifications` | Dispatch bulk event cancellation announcements |
+| `BookingConfirmed` | `SendBookingConfirmationNotifications` | Dispatches booking confirmation notification jobs |
+| `EventCancelled` | `SendEventCancellationNotifications` | Dispatches bulk event cancellation announcements |
 
 Notification listeners are queued and configured to run after the relevant database transaction commits.
+
+## Redis and Queue Workers
+
+The project uses Redis through Predis.
+
+Redis was tested locally with Memurai, and a Laravel Redis connection and queue worker were successfully exercised.
+
+Start a regular queue worker:
+
+```bash
+php artisan queue:work redis --queue=notifications,default,announcements --tries=3 -v
+```
+
+Restart workers after code changes:
+
+```bash
+php artisan queue:restart
+```
+
+## Laravel Horizon
+
+Laravel Horizon is installed and configured.
+
+Its routes are registered, and the configuration includes separate supervisors for:
+
+- `notifications`
+- `default`
+- `announcements`
+
+The Horizon dashboard is available at:
+
+```text
+http://127.0.0.1:8000/horizon
+```
+
+Access is restricted through the `viewHorizon` authorization gate using the email configured in `HORIZON_ADMIN_EMAIL`.
+
+### Windows Limitation
+
+Horizon requires the PHP extensions `pcntl` and `posix` to run its process manager.
+
+These extensions are unavailable in the current native Windows PHP environment. Therefore, Horizon's worker process cannot be started natively on this machine.
+
+The dashboard can be accessed locally, but this does not mean that the Horizon worker is running.
+
+The command:
+
+```bash
+php artisan horizon:status
+```
+
+may report that Horizon is inactive when no Horizon process is running.
+
+To run Horizon, use a supported Linux environment:
+
+```bash
+php artisan horizon
+```
 
 ## Caching
 
@@ -210,9 +386,9 @@ The application uses a polymorphic media relationship to associate media files w
 
 Supported media owners include:
 
-- Events - event posters
-- Venues - venue photos
-- Organizers - organizer logos
+- Events - event posters.
+- Venues - venue photos.
+- Organizers - organizer logos.
 
 This allows media handling to be extended without creating a separate media table for each model.
 
@@ -231,11 +407,13 @@ API exceptions are handled centrally to return consistent JSON responses.
 
 The application handles common API errors, including:
 
-- Validation errors - HTTP 422
-- Unauthenticated requests - HTTP 401
-- Unauthorized actions - HTTP 403
-- Missing resources - HTTP 404
-- Other server errors - HTTP 500
+| Error | HTTP Status |
+|---|---:|
+| Validation errors | 422 |
+| Unauthenticated requests | 401 |
+| Unauthorized actions | 403 |
+| Missing resources | 404 |
+| Server errors | 500 |
 
 ## Running Tests
 
@@ -245,68 +423,42 @@ Run the test suite:
 php artisan test
 ```
 
-The latest recorded test run completed with:
-
-- 30 passing tests
-- 118 assertions
+The test suite passed in the development environment.
 
 Run tests again after installing dependencies or making code changes.
 
-## Queue Processing
+## Postman
 
-The application currently uses Laravel's queue system for asynchronous work.
+The API can be tested using the following Postman files:
 
-To run a local queue worker:
+- `Tazkirati-API.postman_collection.json`
+- `Tazkirati-Local.postman_environment.json`
 
-```bash
-php artisan queue:work
-```
+Import both files into Postman.
 
-For production, queue workers should be managed by a process supervisor. Workers should be restarted after deployment so they load the latest application code:
+Select the `Tazkirati Local` environment and configure the required authentication tokens.
 
-```bash
-php artisan queue:restart
-```
+The collection includes requests for:
 
-> Redis-backed queues, Horizon dashboards, multiple worker processes, and production worker configuration remain pending implementation and verification.
+- Listing published events.
+- Showing event details.
+- Checking remaining tickets.
+- Creating a booking.
+- Confirming payment.
+- Cancelling a temporary booking.
+- Cancelling an organizer-owned event.
 
-## Environment Configuration
+Run the requests in order.
 
-Notification failure simulation is controlled through the `services.tazkirati_notifications` configuration.
+Use separate temporary bookings when testing payment confirmation and booking cancellation.
 
-The following environment settings are available in `.env.example`:
+## Security Notes
 
-```env
-Tazkirati_EMAIL_FAIL=false
-Tazkirati_SMS_FAIL=false
-```
-
-Set either value to `true` to simulate a provider failure during notification delivery.
-
-After changing environment configuration, clear the configuration cache if necessary:
-
-```bash
-php artisan config:clear
-```
-
-## Project Status
-
-| Component | Status |
-|---|---|
-| Event and ticket management | Implemented |
-| Booking and reservation lifecycle | Implemented |
-| Simulated payment confirmation | Implemented |
-| Reservation expiration | Implemented |
-| Email and SMS notification jobs | Implemented |
-| Bulk announcements | Implemented |
-| Notification delivery logging | Implemented |
-| Event caching | Implemented |
-| Polymorphic media | Implemented |
-| API resources and pagination | Implemented |
-| Validation and authorization | Implemented |
-| Redis queue integration | Pending verification |
-| Laravel Horizon | Pending |
-| Postman collection / documented request scenarios | To be confirmed |
+- Never commit `.env` files.
+- Do not expose authentication tokens.
+- Use secure credentials in production.
+- Payment confirmation is simulated and is not connected to a real payment gateway.
+- Organizer ownership authorization must remain enabled.
 
 ## License
 
